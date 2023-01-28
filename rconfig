@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# Copyright (c) 2020 by Thomas A. Early N7TAE
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+SetBooleanValue ()
+{
+	local dvname
+	local cv
+	if [ -z $2 ]; then
+		if [ -z ${!1+x} ]; then
+			if [[ "$1" == module_[abc]_* ]]; then
+				echo matches
+				dvname=${1//_[abc]_/_x_}
+			else
+				echo does not match
+				dvname=${1}_d
+			fi
+			cv=${!dvname}
+		else
+			cv=${!1}
+		fi
+		if [[ $cv == [tT]* ]]; then
+			eval ${1}=false
+		else
+			eval ${1}=true
+		fi
+	elif [[ "$2" == [tT]* ]]; then
+		eval ${1}=true
+	else
+		eval ${1}=false
+	fi
+}
+
+EvaluateVar ()
+{
+	if [ -z ${!1+x} ]; then
+		if [ -z "${!2}" ]; then
+			echo "'' <DEFAULT>"
+		else
+			echo "${!2} <DEFAULT>"
+		fi
+	else
+		if [ -z "${!1}" ]; then
+			echo "''"
+		else
+			echo "${!1}"
+		fi
+	fi
+}
+
+WriteMemFile ()
+{
+	local file
+	file="$rcfg"
+	echo "# created on `date`"                                  > $file
+	[ -z ${callsign+x}    ] || echo    "callsign='$callsign'"  >> $file
+	[ -z ${nummod+x}      ] || echo      "nummod=$nummod"      >> $file
+	[ -z ${mclients+x}    ] || echo    "mclients=$mclients"    >> $file
+	[ -z ${ip4addr+x}     ] || echo     "ip4addr='$ip4addr'"   >> $file
+	[ -z ${ip6addr+x}     ] || echo     "ip6addr='$ip6addr'"   >> $file
+	[ -z ${dbsupport+x}   ] || echo   "dbsupport=$dbsupport"   >> $file
+}
+
+WriteSRCHFile ()
+{
+	local file m
+	file="$srch"
+	echo "// Created on `date`" > $file
+	echo "#define CALLSIGN \"${callsign}\"" >> $file
+	if [ -z ${nummod+x} ]; then
+		echo "#define NB_OF_MODULES ${nummod_d}" >> $file
+	else
+		echo "#define NB_OF_MODULES ${nummod}" >> $file
+	fi
+	if [ ! -z ${ip4addr+x} ]; then
+		echo "#define LISTEN_IPV4 \"${ip4addr}\"" >> $file
+	fi
+	if [ ! -z ${ip6addr+x} ]; then
+		echo "#define LISTEN_IPV6 \"${ip6addr}\"" >> $file
+	fi
+	if [ ! -z ${mclients+x} ]; then
+		if [[ "$mclients" == "true" ]]; then
+			echo "#define MCLIENTS" >> $file
+		fi
+	fi
+}
+
+WriteSRCMKFile ()
+{
+	local file
+	file="$srcm"
+	echo "# Created on `date`" > $file
+	if [ -z ${dbsupport+x} ]; then
+		echo "debug = $dbsupport_d" >> $file
+	else
+		echo "debug = $dbsupport" >> $file
+	fi
+}
+
+WriteCFGFiles ()
+{
+	WriteMemFile
+	WriteSRCHFile
+	WriteSRCMKFile
+}
+
+ListCFGFiles ()
+{
+	echo "===========${rcfg}============="
+	cat $rcfg
+	echo "===========${srch}============="
+	cat $srch
+	echo "===========${srcm}============="
+	cat $srcm
+}
+
+# Execution starts here!
+# file locations
+rcfg='reflector.cfg'
+srch='configure.h'
+srcm='configure.mk'
+mrefserv='/etc/systemd/system/mrefd.service'
+# default values
+callsign_d='CHNGME'
+nummod_d=26
+mclients_d=false
+ip4addr_d='none'
+ip6addr_d='none'
+dbsupport_d=false
+
+if [ -e reflector.cfg ]; then
+	source reflector.cfg
+else
+	echo 'No configuration file found...'
+	sleep 1
+fi
+
+if [ -z ${expertmode+x} ]; then
+	if [ -e $mrefserv ]; then
+		echo -n "You cannot change the configuration right now beacuse there is an m17 server running."
+		echo "===========${rcfg}============="
+		cat $rcfg
+		echo
+		echo "Please uninstall the running server before attempting to modify the configuration."
+		exit 1
+	fi
+fi
+
+key='x'
+# main loop
+while [[ "$key" != q* ]]
+do
+	clear
+	echo
+	echo "        Reflector Configuration, Version #201104"
+	echo
+	echo    "     ************** REFLECTOR  ****************"
+	echo -n "cs : Reflector Callsign                    = "; EvaluateVar callsign{,_d}
+	echo -n "nm : Number of Modules                     = "; EvaluateVar nummod{,_d}
+	echo -n "mc : Allow multiple clients on the same IP = "; EvaluateVar mclients{,_d}
+	echo    "     ************* IP ADDRESSES ***************"
+	echo    "     You must set at least one of these addresses!"
+	echo    "     Usually, IPv4 is 0.0.0.0 and/or IPv6 is ::"
+	echo    "     but might be different in special curcumstances"
+	echo    "     where you cannot bind to the 'any' address."
+	echo -n "i4 : IPv4 Listen Address                   = "; EvaluateVar ip4addr{,_d}
+	echo -n "i6 : IPv6 Listen Address                   = "; EvaluateVar ip6addr{,_d}
+	echo    "     *************** DEBUGGING ****************"
+	echo -n "db : Debugging Support                     = "; EvaluateVar dbsupport{,_d}
+	echo
+	if [[ "$callsign" == M17-* ]] && ( [ ! -z ${ip4addr+x} ] || [ ! -z ${ip6addr+x} ] ); then
+		echo    "w  : Write configuration files (overwrites any existing files) and quit"
+	fi
+	echo    "q  : Quit without saving"
+	echo    "u  : Unset the value of <key> (revert to the default value)."
+	echo
+	read -p "Please input <key> <value> - omit value to toggle a true/false : " key value garbage
+	if [[ "$key" == cs* ]]; then
+		if [[ "${value^^}" =~ ^M17-([0-9A-Z]){3,3}$ ]]; then
+			callsign="${value^^}"
+		else
+			clear
+			echo "${value^^} is not a valid reflector name"
+			read -p "<Enter to continue: "
+		fi
+	elif [[ "$key" == nm* ]]; then nummod="$value"
+	elif [[ "$key" == mc* ]]; then SetBooleanValue mclients "$value"
+	elif [[ "$key" == i4* ]]; then
+		if [[ "$value" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3,3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9]){1,1}$ ]]; then
+			ip4addr="$value"
+		else
+			clear
+			echo "$value is not a valid IPv4 address!"
+			read -p "<Enter> to continue: " garbage
+		fi
+	elif [[ "$key" == i6* ]]; then
+		if [[ "${value^^}" =~ ^(([0-9A-F]{1,4}:){7,7}[0-9A-F]{1,4}|([0-9A-F]{1,4}:){1,7}:|([0-9A-F]{1,4}:){1,6}(:[0-9A-F]{1,4}){1,1}|([0-9A-F]{1,4}:){1,5}(:[0-9A-F]{1,4}){1,2}|([0-9A-F]{1,4}:){1,4}(:[0-9A-F]{1,4}){1,3}|([0-9A-F]{1,4}:){1,3}(:[0-9A-F]{1,4}){1,4}|([0-9A-F]{1,4}:){1,2}(:[0-9A-F]{1,4}){1,5}|([0-9A-F]{1,4}:){1,1}(:[0-9A-F]{1,4}){1,6}|:((:[0-9A-F]{1,4}){1,7}|:))$ ]]; then
+			ip6addr="$value"
+		else
+			clear
+			echo "$value is not a valid IPv6 address!"
+			read -p "<Enter> to continue: " garbage
+		fi
+	elif [[ "$key" == db* ]]; then SetBooleanValue dbsupport "$value"
+	elif [[ "$key" == w* ]]; then
+		if [[ "$callsign" == M17-* ]] && ( [ ! -z ${ip4addr+x} ] || [ ! -z ${ip6addr+x} ] ); then
+			WriteCFGFiles
+			ListCFGFiles
+			exit 0
+		fi
+	elif [[ "$key" == u* ]]; then
+		if   [[ "$value" == cs* ]]; then unset callsign
+		elif [[ "$value" == nm* ]]; then unset nummod
+		elif [[ "$value" == i4* ]]; then unset ip4addr
+		elif [[ "$value" == i6* ]]; then unset ip6addr
+		elif [[ "$value" == mc* ]]; then unset mclients
+		elif [[ "$value" == db* ]]; then unset dbsupport
+		fi
+	fi
+done
+exit 0
